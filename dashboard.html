@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rambal – Dashboard</title>
+<link rel="stylesheet" href="rambal.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+</head>
+<body>
+
+<div id="sidebar"></div>
+<div class="sidebar-overlay" id="sb-overlay" onclick="closeSidebar()"></div>
+
+<div class="main">
+  <div class="topbar">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <button class="hamburger" onclick="toggleSidebar()">☰</button>
+      <div class="topbar-left">
+        <h1>Dashboard</h1>
+        <div class="topbar-sub" id="fecha-hoy"></div>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <a href="nuevo-traslado.html" class="btn btn-primary">+ Nuevo Traslado</a>
+    </div>
+  </div>
+
+  <div class="content">
+
+    <!-- STATS GRID -->
+    <div class="stats-grid" id="stats-grid">
+      <div class="stat-card" style="--accent:#6B21A8">
+        <div class="stat-icon">📋</div>
+        <div class="stat-val" id="s-total">—</div>
+        <div class="stat-label">Traslados del mes</div>
+      </div>
+      <div class="stat-card" style="--accent:#D97706">
+        <div class="stat-icon">🚚</div>
+        <div class="stat-val" id="s-transito">—</div>
+        <div class="stat-label">En tránsito ahora</div>
+      </div>
+      <div class="stat-card" style="--accent:#2563EB">
+        <div class="stat-icon">📥</div>
+        <div class="stat-val" id="s-pendientes">—</div>
+        <div class="stat-label">Pendientes recibir</div>
+      </div>
+      <div class="stat-card" style="--accent:#DC2626">
+        <div class="stat-icon">🗂️</div>
+        <div class="stat-val" id="s-ofimatica">—</div>
+        <div class="stat-label">Pendientes Ofimática</div>
+      </div>
+      <div class="stat-card" style="--accent:#059669">
+        <div class="stat-icon">🏆</div>
+        <div class="stat-val" id="s-prod-top" style="font-size:15px;line-height:1.3;">—</div>
+        <div class="stat-label">Producto más trasladado hoy</div>
+      </div>
+    </div>
+
+    <!-- CHARTS ROW -->
+    <div class="grid-2 mt-4" style="margin-bottom:20px;">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Traslados por período</span>
+          <div style="display:flex;gap:6px;">
+            <button class="btn btn-xs btn-secondary" onclick="setChart('dia')" id="btn-dia">Día</button>
+            <button class="btn btn-xs btn-primary" onclick="setChart('semana')" id="btn-semana">Semana</button>
+            <button class="btn btn-xs btn-secondary" onclick="setChart('mes')" id="btn-mes">Mes</button>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="chart-wrap" style="height:220px;">
+            <canvas id="chart-traslados"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Cantidad trasladada</span>
+          <div style="display:flex;gap:6px;">
+            <button class="btn btn-xs btn-secondary" onclick="setChartCant('dia')" id="cbtn-dia">Día</button>
+            <button class="btn btn-xs btn-primary" onclick="setChartCant('semana')" id="cbtn-semana">Semana</button>
+            <button class="btn btn-xs btn-secondary" onclick="setChartCant('mes')" id="cbtn-mes">Mes</button>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="chart-wrap" style="height:220px;">
+            <canvas id="chart-cantidad"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- BOTTOM ROW -->
+    <div class="grid-2">
+      <!-- Últimos traslados -->
+      <div class="table-wrap">
+        <div class="table-header">
+          <span class="table-title">Últimos Traslados</span>
+          <a href="traslados.html" class="btn btn-xs btn-outline-purple">Ver todos</a>
+        </div>
+        <table>
+          <thead><tr>
+            <th>ID</th><th>Producto(s)</th><th>Estado</th><th>Fecha</th>
+          </tr></thead>
+          <tbody id="tbody-recientes">
+            <tr><td colspan="4" class="table-empty">Cargando...</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Top productos del mes -->
+      <div class="table-wrap">
+        <div class="table-header">
+          <span class="table-title">Top Productos del Mes</span>
+        </div>
+        <table>
+          <thead><tr>
+            <th>#</th><th>Producto</th><th>Unidades</th><th>Traslados</th>
+          </tr></thead>
+          <tbody id="tbody-top-prod">
+            <tr><td colspan="4" class="table-empty">Cargando...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script src="rambal.js"></script>
+<script>
+const user = requireAuth();
+renderSidebar('dashboard');
+
+// Fecha
+const dias = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'];
+const meses = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+const hoy = new Date();
+document.getElementById('fecha-hoy').textContent =
+  `${dias[hoy.getDay()]}, ${hoy.getDate()} de ${meses[hoy.getMonth()]} de ${hoy.getFullYear()}`;
+
+// Toggle sidebar mobile
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('open');
+  document.getElementById('sb-overlay').classList.toggle('open');
+}
+function closeSidebar() {
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('sb-overlay').classList.remove('open');
+}
+
+let allTraslados = [];
+let allItems = [];
+let chartTraslados = null;
+let chartCantidad  = null;
+let periodoT = 'semana';
+let periodoC = 'semana';
+
+async function loadDashboard() {
+  try {
+    const now = new Date();
+    const y = now.getFullYear(), m = String(now.getMonth()+1).padStart(2,'0');
+    const inicioMes = `${y}-${m}-01`;
+
+    // Traslados del mes
+    const [traslados, items] = await Promise.all([
+      supaGet('traslados', `fecha=gte.${inicioMes}&select=*`),
+      supaGet('traslado_items', `select=*,productos(nombre,unidad)`)
+    ]);
+
+    allTraslados = traslados || [];
+    allItems = items || [];
+
+    // Stats
+    document.getElementById('s-total').textContent     = allTraslados.length;
+    document.getElementById('s-transito').textContent  = allTraslados.filter(t=>t.estado==='en_transito').length;
+    document.getElementById('s-pendientes').textContent= allTraslados.filter(t=>t.estado==='en_transito').length;
+    document.getElementById('s-ofimatica').textContent = allTraslados.filter(t=>
+      (t.estado==='recibido'||t.estado==='recibido_con_diferencias') && !t.consecutivo_ofimatica
+    ).length;
+
+    // Producto más trasladado hoy
+    const todayStr = now.toISOString().split('T')[0];
+    const hoyT = allTraslados.filter(t=>t.fecha===todayStr).map(t=>t.id);
+    const itemsHoy = allItems.filter(i=>hoyT.includes(i.traslado_id));
+    const prodCount = {};
+    itemsHoy.forEach(i=>{
+      const n = i.productos?.nombre || '—';
+      prodCount[n] = (prodCount[n]||0) + Number(i.cantidad_enviada||0);
+    });
+    const topHoy = Object.entries(prodCount).sort((a,b)=>b[1]-a[1])[0];
+    document.getElementById('s-prod-top').textContent = topHoy ? topHoy[0] : 'Sin datos hoy';
+
+    // Últimos traslados
+    renderRecientes(allTraslados.slice(0,5));
+
+    // Top productos del mes
+    renderTopProd(allItems);
+
+    // Charts
+    buildChart();
+    buildChartCant();
+
+  } catch(e) {
+    console.error(e);
+    toast('Error cargando dashboard', 'err');
+  }
+}
+
+function renderRecientes(lista) {
+  const tbody = document.getElementById('tbody-recientes');
+  if (!lista.length) { tbody.innerHTML = `<tr><td colspan="4" class="table-empty">Sin traslados este mes</td></tr>`; return; }
+  tbody.innerHTML = lista.map(t => {
+    const prods = allItems.filter(i=>i.traslado_id===t.id).map(i=>i.productos?.nombre||'—').join(', ') || '—';
+    return `<tr style="cursor:pointer" onclick="window.location='ver-traslado.html?id=${t.id}'">
+      <td class="cod">${t.codigo}</td>
+      <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${prods}">${prods}</td>
+      <td>${badgeEstado(t.estado)}</td>
+      <td class="text-sm text-muted">${fmtFecha(t.fecha)}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderTopProd(items) {
+  const tbody = document.getElementById('tbody-top-prod');
+  const agg = {};
+  items.forEach(i => {
+    const n = i.productos?.nombre || '—';
+    if (!agg[n]) agg[n] = { cant: 0, count: 0 };
+    agg[n].cant  += Number(i.cantidad_enviada||0);
+    agg[n].count += 1;
+  });
+  const sorted = Object.entries(agg).sort((a,b)=>b[1].cant-a[1].cant).slice(0,6);
+  if (!sorted.length) { tbody.innerHTML=`<tr><td colspan="4" class="table-empty">Sin datos</td></tr>`; return; }
+  tbody.innerHTML = sorted.map(([n,v],i) => `
+    <tr>
+      <td><strong style="color:var(--purple)">${i+1}</strong></td>
+      <td>${n}</td>
+      <td><strong>${fmtNum(v.cant)}</strong></td>
+      <td class="text-muted text-sm">${v.count}</td>
+    </tr>
+  `).join('');
+}
+
+function getLabelsData(periodo, campo='count') {
+  const now = new Date();
+  const labels = [], data = [];
+
+  if (periodo === 'dia') {
+    for (let i=6; i>=0; i--) {
+      const d = new Date(now); d.setDate(d.getDate()-i);
+      const str = d.toISOString().split('T')[0];
+      const ts = allTraslados.filter(t=>t.fecha===str);
+      labels.push(d.toLocaleDateString('es-CO',{weekday:'short',day:'numeric'}));
+      if (campo==='count') data.push(ts.length);
+      else {
+        const ids = ts.map(t=>t.id);
+        const total = allItems.filter(i=>ids.includes(i.traslado_id)).reduce((s,i)=>s+Number(i.cantidad_enviada||0),0);
+        data.push(total);
+      }
+    }
+  } else if (periodo === 'semana') {
+    for (let i=3; i>=0; i--) {
+      const start = new Date(now); start.setDate(start.getDate() - start.getDay() - i*7);
+      const end   = new Date(start); end.setDate(start.getDate()+6);
+      const sStr  = start.toISOString().split('T')[0];
+      const eStr  = end.toISOString().split('T')[0];
+      const ts    = allTraslados.filter(t=>t.fecha>=sStr&&t.fecha<=eStr);
+      labels.push(`Sem ${start.getDate()}/${start.getMonth()+1}`);
+      if (campo==='count') data.push(ts.length);
+      else {
+        const ids = ts.map(t=>t.id);
+        const total = allItems.filter(i=>ids.includes(i.traslado_id)).reduce((s,i)=>s+Number(i.cantidad_enviada||0),0);
+        data.push(total);
+      }
+    }
+  } else {
+    for (let i=5; i>=0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth()-i, 1);
+      const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,'0');
+      const ts = allTraslados.filter(t=>t.fecha&&t.fecha.startsWith(`${y}-${m}`));
+      labels.push(d.toLocaleDateString('es-CO',{month:'short',year:'2-digit'}));
+      if (campo==='count') data.push(ts.length);
+      else {
+        const ids = ts.map(t=>t.id);
+        const total = allItems.filter(i=>ids.includes(i.traslado_id)).reduce((s,i)=>s+Number(i.cantidad_enviada||0),0);
+        data.push(total);
+      }
+    }
+  }
+  return { labels, data };
+}
+
+function buildChart() {
+  const ctx = document.getElementById('chart-traslados').getContext('2d');
+  if (chartTraslados) chartTraslados.destroy();
+  const {labels, data} = getLabelsData(periodoT, 'count');
+  chartTraslados = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Traslados',
+        data,
+        backgroundColor: 'rgba(107,33,168,.8)',
+        borderRadius: 6,
+        borderSkipped: false,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        y: { beginAtZero: true, ticks: { stepSize: 1 }, grid: { color: '#F3F4F6' } },
+        x: { grid: { display: false } }
+      }
+    }
+  });
+}
+
+function buildChartCant() {
+  const ctx = document.getElementById('chart-cantidad').getContext('2d');
+  if (chartCantidad) chartCantidad.destroy();
+  const {labels, data} = getLabelsData(periodoC, 'cant');
+  chartCantidad = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Unidades',
+        data,
+        borderColor: '#7C3AED',
+        backgroundColor: 'rgba(124,58,237,.1)',
+        borderWidth: 2.5,
+        pointBackgroundColor: '#7C3AED',
+        pointRadius: 4,
+        fill: true,
+        tension: 0.4
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        y: { beginAtZero: true, grid: { color: '#F3F4F6' } },
+        x: { grid: { display: false } }
+      }
+    }
+  });
+}
+
+function setChart(p) {
+  periodoT = p;
+  ['dia','semana','mes'].forEach(x=>{
+    document.getElementById(`btn-${x}`).className = 'btn btn-xs ' + (x===p?'btn-primary':'btn-secondary');
+  });
+  buildChart();
+}
+
+function setChartCant(p) {
+  periodoC = p;
+  ['dia','semana','mes'].forEach(x=>{
+    document.getElementById(`cbtn-${x}`).className = 'btn btn-xs ' + (x===p?'btn-primary':'btn-secondary');
+  });
+  buildChartCant();
+}
+
+loadDashboard();
+</script>
+</body>
+</html>

@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rambal – Nuevo Traslado</title>
+<link rel="stylesheet" href="rambal.css">
+<style>
+  .autocomplete-wrap { position: relative; }
+  .autocomplete-list {
+    position: absolute; top: 100%; left: 0; right: 0; z-index: 200;
+    background: white; border: 1.5px solid var(--purple-mid);
+    border-radius: 0 0 9px 9px; max-height: 200px; overflow-y: auto;
+    box-shadow: 0 8px 20px rgba(0,0,0,0.12);
+  }
+  .autocomplete-item {
+    padding: 10px 13px; cursor: pointer; font-size: 13px;
+    border-bottom: 1px solid var(--gray-100); transition: .1s;
+  }
+  .autocomplete-item:hover { background: var(--purple-faint); }
+  .autocomplete-item:last-child { border: none; }
+  .autocomplete-item .ac-code { font-weight: 700; color: var(--purple); font-size: 12px; }
+  .autocomplete-item .ac-name { color: var(--gray-800); margin-top: 1px; }
+  .autocomplete-item .ac-lote { color: var(--gray-400); font-size: 11px; }
+
+  .item-card {
+    background: var(--gray-50); border: 1.5px solid var(--gray-200);
+    border-radius: 10px; padding: 14px 16px; margin-bottom: 12px;
+    position: relative;
+  }
+  .item-card.tiene-producto { border-color: rgba(107,33,168,0.3); background: var(--purple-faint); }
+  .item-resumen {
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--gray-200);
+  }
+  .item-tag {
+    background: white; border: 1px solid var(--gray-200);
+    border-radius: 6px; padding: 3px 10px; font-size: 12px; color: var(--gray-700);
+  }
+  .total-tag {
+    background: var(--purple); color: white;
+    border-radius: 6px; padding: 3px 10px; font-size: 12px; font-weight: 700;
+  }
+</style>
+</head>
+<body>
+<div id="sidebar"></div>
+<div class="sidebar-overlay" id="sb-overlay" onclick="closeSidebar()"></div>
+
+<div class="main">
+  <div class="topbar">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <button class="hamburger" onclick="toggleSidebar()">☰</button>
+      <div class="topbar-left">
+        <h1>Nuevo Traslado</h1>
+        <div class="topbar-sub">Planta → Bodega de Producto Terminado</div>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <a href="traslados.html" class="btn btn-secondary">← Volver</a>
+    </div>
+  </div>
+
+  <div class="content">
+    <div style="max-width:700px;margin:0 auto;">
+
+      <div class="card" style="margin-bottom:16px;">
+        <div class="card-header">
+          <span class="card-title">🚚 Información General</span>
+        </div>
+        <div class="card-body">
+          <div id="form-error" class="form-error-msg" style="display:none;"></div>
+          <div class="form-grid">
+            <div class="form-group">
+              <label class="form-label">Fecha <span class="required">*</span></label>
+              <input type="date" class="form-input" id="f-fecha">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Observaciones</label>
+              <input type="text" class="form-input" id="f-obs" placeholder="Novedades, instrucciones...">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:16px;">
+        <div class="card-header">
+          <span class="card-title">📦 Productos a Trasladar</span>
+          <button class="btn btn-sm btn-purple" onclick="agregarItem()">+ Agregar Producto</button>
+        </div>
+        <div class="card-body" id="items-container">
+          <div id="items-empty" style="text-align:center;padding:24px;color:var(--gray-400);font-size:14px;">
+            Hacé clic en <strong>"+ Agregar Producto"</strong> para comenzar
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex;justify-content:flex-end;gap:10px;">
+        <a href="traslados.html" class="btn btn-secondary">Cancelar</a>
+        <button class="btn btn-primary" onclick="guardar('borrador')">Guardar Borrador</button>
+        <button class="btn btn-purple" onclick="guardar('en_transito')">🚚 Confirmar Salida</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="rambal.js"></script>
+<script>
+const user = requireAuth();
+renderSidebar('traslados');
+
+if (!['admin','operario_planta'].includes(user.rol)) {
+  alert('No tenés permiso para crear traslados.');
+  window.location.href = 'traslados.html';
+}
+
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('open');
+  document.getElementById('sb-overlay').classList.toggle('open');
+}
+function closeSidebar() {
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('sb-overlay').classList.remove('open');
+}
+
+document.getElementById('f-fecha').value = new Date().toISOString().split('T')[0];
+
+let productos = [];
+let items = [];
+let itemCount = 0;
+
+async function loadProductos() {
+  try {
+    productos = await supaGet('productos', 'activo=eq.true&order=codigo.asc&select=*') || [];
+  } catch(e) { toast('Error cargando productos','err'); }
+}
+
+function buscarProducto(query) {
+  const q = query.toLowerCase().trim();
+  if (!q) return [];
+  return productos.filter(p =>
+    p.codigo?.toLowerCase().startsWith(q) ||
+    p.nombre?.toLowerCase().includes(q)
+  ).slice(0, 8);
+}
+
+function agregarItem() {
+  if (!productos.length) { toast('No hay productos disponibles','err'); return; }
+  document.getElementById('items-empty').style.display = 'none';
+  itemCount++;
+  const id = itemCount;
+  items.push({ id, producto: null, cajas: 0 });
+
+  const div = document.createElement('div');
+  div.id = `item-${id}`;
+  div.className = 'item-card';
+  div.innerHTML = `
+    <div style="display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap;">
+
+      <div class="form-group autocomplete-wrap" style="flex:1.5;min-width:180px;">
+        <label class="form-label">Código del Producto <span class="required">*</span></label>
+        <input type="text" class="form-input" id="cod-${id}"
+          placeholder="Ej: 3110"
+          oninput="onCodigoInput(${id}, this.value)"
+          onblur="setTimeout(()=>cerrarAC(${id}), 180)"
+          autocomplete="off">
+        <div class="autocomplete-list" id="ac-${id}" style="display:none;"></div>
+      </div>
+
+      <div class="form-group" style="flex:2;min-width:160px;">
+        <label class="form-label">Producto</label>
+        <input type="text" class="form-input" id="nombre-${id}"
+          placeholder="Se completa automáticamente"
+          readonly style="background:var(--gray-50);color:var(--gray-600);">
+      </div>
+
+      <div class="form-group" style="flex:.8;min-width:100px;">
+        <label class="form-label">Cajas <span class="required">*</span></label>
+        <input type="number" class="form-input" id="cajas-${id}"
+          min="1" step="1" placeholder="0"
+          oninput="onCajasInput(${id}, this.value)">
+      </div>
+
+      <div class="form-group" style="flex:1;min-width:120px;">
+        <label class="form-label">Lote</label>
+        <input type="text" class="form-input" id="lote-${id}"
+          placeholder="Ej: 260740-10"
+          style="font-family:monospace;font-size:13px;"
+          oninput="onLoteInput(${id}, this.value)">
+        <div id="lote-alert-${id}" style="display:none;margin-top:5px;padding:7px 10px;background:#FEF3C7;color:#92400E;border:1px solid #FCD34D;border-radius:7px;font-size:12px;font-weight:600;line-height:1.3;"></div>
+      </div>
+
+      <button onclick="eliminarItem(${id})"
+        class="btn btn-danger btn-sm"
+        style="flex-shrink:0;margin-top:22px;">✕</button>
+    </div>
+
+    <div class="item-resumen" id="resumen-${id}" style="display:none;">
+      <span class="item-tag" id="tag-unidad-${id}"></span>
+      <span style="font-size:13px;color:var(--gray-400);">×</span>
+      <span class="item-tag" id="tag-cajas-${id}"></span>
+      <span style="font-size:13px;color:var(--gray-400);">=</span>
+      <span class="total-tag" id="tag-total-${id}"></span>
+    </div>
+  `;
+  document.getElementById('items-container').appendChild(div);
+  document.getElementById(`cod-${id}`).focus();
+}
+
+function onCodigoInput(id, val) {
+  const resultados = buscarProducto(val);
+  const ac = document.getElementById(`ac-${id}`);
+
+  // Limpiar producto seleccionado si se borra el código
+  const item = items.find(i=>i.id===id);
+  if (item) item.producto = null;
+  document.getElementById(`nombre-${id}`).value = '';
+  document.getElementById(`item-${id}`).className = 'item-card';
+  document.getElementById(`resumen-${id}`).style.display = 'none';
+
+  if (!val.trim() || !resultados.length) { ac.style.display='none'; return; }
+
+  ac.innerHTML = resultados.map(p => `
+    <div class="autocomplete-item" onmousedown="seleccionarProducto(${id}, '${p.id}')">
+      <div class="ac-code">${p.codigo}</div>
+      <div class="ac-name">${p.nombre}</div>
+      <div class="ac-lote">${p.unidad} · ${p.cantidad_por_caja||1} und/caja</div>
+    </div>
+  `).join('');
+  ac.style.display = 'block';
+}
+
+function seleccionarProducto(id, prodId) {
+  const prod = productos.find(p=>p.id===prodId);
+  if (!prod) return;
+
+  const item = items.find(i=>i.id===id);
+  if (item) item.producto = prod;
+
+  document.getElementById(`cod-${id}`).value = prod.codigo;
+  document.getElementById(`nombre-${id}`).value = prod.nombre;
+  document.getElementById(`ac-${id}`).style.display = 'none';
+  document.getElementById(`item-${id}`).className = 'item-card tiene-producto';
+
+  // Actualizar resumen si ya hay cajas
+  const cajas = parseFloat(document.getElementById(`cajas-${id}`).value) || 0;
+  if (cajas > 0) actualizarResumen(id, prod, cajas);
+  else document.getElementById(`cajas-${id}`).focus();
+}
+
+function cerrarAC(id) {
+  const ac = document.getElementById(`ac-${id}`);
+  if (ac) ac.style.display = 'none';
+}
+
+function onCajasInput(id, val) {
+  const item = items.find(i=>i.id===id);
+  if (!item) return;
+  const cajas = parseFloat(val) || 0;
+  if (item) item.cajas = cajas;
+  if (item.producto && cajas > 0) actualizarResumen(id, item.producto, cajas);
+  else document.getElementById(`resumen-${id}`).style.display = 'none';
+}
+
+async function onLoteInput(id, val) {
+  const lote = val.trim();
+  const item = items.find(i=>i.id===id);
+  const alertEl = document.getElementById(`lote-alert-${id}`);
+  if (!alertEl || !lote || !item?.producto) { if(alertEl) alertEl.style.display='none'; return; }
+
+  // Alerta 1: mismo código + lote en el mismo formulario
+  const duplicadoLocal = items.some(i => i.id !== id && i.producto?.id === item.producto?.id
+    && document.getElementById(`lote-${i.id}`)?.value.trim() === lote);
+  if (duplicadoLocal) {
+    alertEl.textContent = '⚠ Este código con el mismo lote ya está en este traslado. ¿Es complemento de pallet?';
+    alertEl.style.display = 'block';
+    return;
+  }
+
+  // Alerta 2: buscar en traslados anteriores
+  try {
+    const prev = await supaGet('traslado_items',
+      `lote=eq.${encodeURIComponent(lote)}&producto_id=eq.${item.producto.id}&select=lote,cantidad_enviada,traslado_id`);
+    if (prev && prev.length > 0) {
+      // buscar codigos de esos traslados
+      const tids = [...new Set(prev.map(i=>i.traslado_id))];
+      const prevTraslados = await supaGet('traslados', `id=in.(${tids.join(',')})&select=codigo,fecha`);
+      const total = prev.reduce((s,i)=>s+Number(i.cantidad_enviada||0),0);
+      const codigos = (prevTraslados||[]).map(t=>t.codigo).join(', ');
+      alertEl.innerHTML = `⚠ <strong>Pilas:</strong> el código <strong>${item.producto.codigo}</strong> con lote <strong>${lote}</strong> ya fue trasladado en: ${codigos} (${fmtNum(total)} und en total). ¿Es complemento de pallet?`;
+      alertEl.style.display = 'block';
+    } else {
+      alertEl.style.display = 'none';
+    }
+  } catch(e) { alertEl.style.display='none'; }
+}
+
+function actualizarResumen(id, prod, cajas) {
+  const undPorCaja = parseFloat(prod.cantidad_por_caja) || 1;
+  const total = cajas * undPorCaja;
+  document.getElementById(`tag-unidad-${id}`).textContent = `${fmtNum(undPorCaja)} ${prod.unidad}/caja`;
+  document.getElementById(`tag-cajas-${id}`).textContent = `${cajas} caja${cajas!==1?'s':''}`;
+  document.getElementById(`tag-total-${id}`).textContent = `${fmtNum(total)} ${prod.unidad} total`;
+  document.getElementById(`resumen-${id}`).style.display = 'flex';
+}
+
+function eliminarItem(id) {
+  document.getElementById(`item-${id}`)?.remove();
+  items = items.filter(i=>i.id!==id);
+  if (!items.length) document.getElementById('items-empty').style.display='block';
+}
+
+async function guardar(estadoFinal) {
+  const errDiv = document.getElementById('form-error');
+  errDiv.style.display = 'none';
+  const fecha = document.getElementById('f-fecha').value;
+  const obs   = document.getElementById('f-obs').value;
+  if (!fecha) { errDiv.style.display='block'; errDiv.textContent='La fecha es obligatoria.'; return; }
+
+  const itemsFinales = items.filter(i => i.producto).map(i => {
+    const cajas = parseFloat(document.getElementById(`cajas-${i.id}`)?.value) || 0;
+    const undPorCaja = parseFloat(i.producto.cantidad_por_caja) || 1;
+    const lote = document.getElementById(`lote-${i.id}`)?.value.trim() || null;
+    return {
+      producto_id: i.producto.id,
+      cantidad_enviada: cajas * undPorCaja,
+      cajas_enviadas: cajas,
+      lote,
+    };
+  }).filter(i => i.cantidad_enviada > 0);
+
+  if (!itemsFinales.length) {
+    errDiv.style.display='block';
+    errDiv.textContent='Agregá al menos un producto con código y cantidad de cajas válidos.';
+    return;
+  }
+
+  // Permitir mismo producto varias veces (complemento de pallet)
+
+  try {
+    const todos = await supaGet('traslados','select=codigo&order=fecha_creacion.desc') || [];
+    const codigo = nextCodigo(todos);
+
+    const nuevoT = await supaPost('traslados', {
+      codigo, fecha, observaciones: obs,
+      estado: estadoFinal,
+      creado_por: user.id,
+      fecha_creacion: new Date().toISOString(),
+      ...(estadoFinal==='en_transito' ? {
+        confirmado_salida_por: user.id,
+        fecha_salida: new Date().toISOString()
+      } : {})
+    });
+
+    if (!nuevoT || !nuevoT[0]) throw new Error('No se pudo crear el traslado');
+    const tid = nuevoT[0].id;
+
+    await supaPost('traslado_items', itemsFinales.map(i=>({
+      traslado_id: tid,
+      producto_id: i.producto_id,
+      cantidad_enviada: i.cantidad_enviada,
+      lote: i.lote || null,
+    })));
+
+    const evento = estadoFinal === 'en_transito' ? 'salida_confirmada' : 'creado';
+    const traza = await supaPost('trazabilidad', {
+      traslado_id: tid, evento,
+      usuario_id: user.id, fecha_hora: new Date().toISOString()
+    });
+
+    if (traza?.[0]) {
+      await supaPost('trazabilidad_detalles', itemsFinales.map(i=>({
+        trazabilidad_id: traza[0].id,
+        producto_id: i.producto_id,
+        cantidad: i.cantidad_enviada,
+        observacion: estadoFinal==='en_transito' ? 'Salida confirmada' : 'Traslado creado'
+      })));
+    }
+
+    toast(`Traslado ${codigo} creado`, 'ok');
+    setTimeout(() => window.location.href = `ver-traslado.html?id=${tid}`, 900);
+  } catch(e) {
+    errDiv.style.display='block'; errDiv.textContent='Error al guardar: '+e.message;
+  }
+}
+
+loadProductos();
+</script>
+</body>
+</html>

@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rambal – Trazabilidad</title>
+<link rel="stylesheet" href="rambal.css">
+</head>
+<body>
+<div id="sidebar"></div>
+<div class="sidebar-overlay" id="sb-overlay" onclick="closeSidebar()"></div>
+
+<div class="main">
+  <div class="topbar">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <button class="hamburger" onclick="toggleSidebar()">☰</button>
+      <div class="topbar-left"><h1>Trazabilidad</h1><div class="topbar-sub">Historial completo de eventos</div></div>
+    </div>
+  </div>
+
+  <div class="content">
+    <!-- Filtros -->
+    <div class="card card-pad" style="margin-bottom:16px;">
+      <div class="toolbar" style="margin:0;">
+        <input type="text" class="search-input" id="search" placeholder="🔍 Buscar por traslado, usuario..." oninput="filtrar()">
+        <select class="filter-select" id="f-evento" onchange="filtrar()">
+          <option value="">Todos los eventos</option>
+          <option value="creado">Creado</option>
+          <option value="salida_confirmada">Salida Confirmada</option>
+          <option value="recibido">Recibido</option>
+          <option value="recibido_con_diferencias">Recibido c/Diferencias</option>
+          <option value="registrado_ofimatica">Registrado Ofimática</option>
+          <option value="anulado">Anulado</option>
+        </select>
+        <input type="date" class="filter-select" id="f-desde" onchange="filtrar()">
+        <input type="date" class="filter-select" id="f-hasta" onchange="filtrar()">
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <div class="table-header">
+        <span class="table-title">Eventos de Trazabilidad</span>
+        <span class="text-sm text-muted" id="trz-count"></span>
+      </div>
+      <div style="overflow-x:auto;">
+        <table>
+          <thead><tr>
+            <th>Fecha / Hora</th><th>Traslado</th><th>Evento</th>
+            <th>Usuario</th><th>Productos</th><th></th>
+          </tr></thead>
+          <tbody id="tbody-trz">
+            <tr><td colspan="6" class="table-empty">Cargando...</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="table-footer" id="trz-footer"></div>
+    </div>
+  </div>
+</div>
+
+<script src="rambal.js"></script>
+<script>
+const user = requireAuth();
+renderSidebar('trazabilidad');
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('open');
+  document.getElementById('sb-overlay').classList.toggle('open');
+}
+function closeSidebar() {
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('sb-overlay').classList.remove('open');
+}
+
+let allTrz = [];
+let allDetalles = [];
+let allTraslados = [];
+let allUsuarios = [];
+let allTItems = [];
+let filtrados = [];
+
+const EVENTO_LABELS = {
+  creado: { label: '📝 Creado', color: '#6B7280', bg: '#F3F4F6' },
+  salida_confirmada: { label: '🚚 Salida', color: '#D97706', bg: '#FEF3C7' },
+  recibido: { label: '✅ Recibido', color: '#059669', bg: '#D1FAE5' },
+  recibido_con_diferencias: { label: '⚠️ Con Diferencias', color: '#DC2626', bg: '#FEE2E2' },
+  registrado_ofimatica: { label: '🗂️ Ofimática', color: '#2563EB', bg: '#DBEAFE' },
+  anulado: { label: '🚫 Anulado', color: '#9CA3AF', bg: '#F9FAFB' },
+};
+
+async function load() {
+  try {
+    const [trz, det, tsl, usr, tItems] = await Promise.all([
+      supaGet('trazabilidad','select=*&order=fecha_hora.desc&limit=500'),
+      supaGet('trazabilidad_detalles','select=*,productos(nombre,unidad)'),
+      supaGet('traslado_items','select=traslado_id,producto_id,lote'),
+      supaGet('traslados','select=id,codigo'),
+      supaGet('usuarios','select=id,nombre')
+    ]);
+    allTrz       = trz || [];
+    allDetalles  = det || [];
+    allTraslados = tsl || [];
+    allUsuarios  = usr || [];
+    allTItems    = tItems || [];
+    filtrar();
+  } catch(e) { toast('Error cargando','err'); }
+}
+
+function getTraslado(id) { return allTraslados.find(t=>t.id===id); }
+function getUsuario(id)  { return allUsuarios.find(u=>u.id===id)?.nombre||'—'; }
+
+function filtrar() {
+  const q      = document.getElementById('search').value.toLowerCase();
+  const evento = document.getElementById('f-evento').value;
+  const desde  = document.getElementById('f-desde').value;
+  const hasta  = document.getElementById('f-hasta').value;
+
+  filtrados = allTrz.filter(t => {
+    const trsl = getTraslado(t.traslado_id);
+    const matchQ = !q || trsl?.codigo?.toLowerCase().includes(q) ||
+                   getUsuario(t.usuario_id).toLowerCase().includes(q);
+    const matchE = !evento || t.evento === evento;
+    const fHora  = t.fecha_hora?.split('T')[0]||'';
+    const matchD = !desde || fHora >= desde;
+    const matchH = !hasta || fHora <= hasta;
+    return matchQ && matchE && matchD && matchH;
+  });
+
+  renderTabla();
+}
+
+function renderTabla() {
+  const tbody = document.getElementById('tbody-trz');
+  document.getElementById('trz-count').textContent=`${filtrados.length} evento(s)`;
+  document.getElementById('trz-footer').textContent=`Mostrando ${filtrados.length} de ${allTrz.length} eventos`;
+
+  if (!filtrados.length) { tbody.innerHTML=`<tr><td colspan="6" class="table-empty">Sin eventos</td></tr>`; return; }
+
+  tbody.innerHTML = filtrados.map(trz => {
+    const ev   = EVENTO_LABELS[trz.evento]||{label:trz.evento,color:'#6B7280',bg:'#F3F4F6'};
+    const trsl = getTraslado(trz.traslado_id);
+    const dets = allDetalles.filter(d=>d.trazabilidad_id===trz.id);
+    const prodsHtml = dets.length
+      ? dets.map(d=>`<div style="font-size:12px;color:var(--gray-600);">${d.productos?.nombre||'—'} · ${fmtNum(d.cantidad)} ${d.productos?.unidad||''} ${d.observacion?'<span style="color:var(--gray-400);">— '+d.observacion+'</span>':''}</div>`).join('')
+      : '<span class="text-muted text-sm">—</span>';
+
+    return `<tr>
+      <td class="text-sm" style="white-space:nowrap;">${fmtDateTime(trz.fecha_hora)}</td>
+      <td>
+        ${trsl ? `<a href="ver-traslado.html?id=${trsl.id}" class="cod" style="text-decoration:none;">${trsl.codigo}</a>` : '<span class="text-muted">—</span>'}
+      </td>
+      <td><span class="badge" style="background:${ev.bg};color:${ev.color}">${ev.label}</span></td>
+      <td class="text-sm">${getUsuario(trz.usuario_id)}</td>
+      <td>${prodsHtml}</td>
+      <td>${trsl?`<a href="ver-traslado.html?id=${trsl.id}" class="btn btn-xs btn-outline-purple">Ver</a>`:''}</td>
+    </tr>`;
+  }).join('');
+}
+
+load();
+</script>
+</body>
+</html>

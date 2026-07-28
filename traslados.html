@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rambal – Traslados</title>
+<link rel="stylesheet" href="rambal.css">
+<style>
+.lote-tag {
+  display:inline-block; padding:2px 8px; border-radius:5px;
+  background:#EDE9FE; color:#6B21A8; font-size:11px; font-weight:700;
+  font-family:monospace; cursor:pointer; margin:1px;
+  border:1px solid #DDD6FE; transition:.15s;
+}
+.lote-tag:hover { background:#DDD6FE; }
+.lote-resaltado {
+  background:#FEF3C7 !important; color:#92400E !important;
+  border-color:#FCD34D !important;
+  box-shadow: 0 0 0 2px #FCD34D;
+}
+.lote-mas {
+  font-size:11px; color:var(--gray-400); cursor:pointer; font-weight:600;
+}
+.lote-mas:hover { color:var(--purple); }
+
+/* Popup lotes */
+#lotes-popup {
+  position:fixed; z-index:9999;
+  background:white; border-radius:12px;
+  border:1px solid var(--gray-200);
+  box-shadow:0 8px 30px rgba(0,0,0,0.15);
+  padding:14px 16px; min-width:220px; max-width:320px;
+  display:none;
+}
+#lotes-popup.open { display:block; }
+#lotes-popup h4 { font-size:13px; font-weight:700; color:var(--black); margin-bottom:10px; }
+.popup-lote-row {
+  display:flex; justify-content:space-between; align-items:flex-start;
+  padding:5px 0; border-bottom:1px solid var(--gray-100); font-size:12px;
+}
+.popup-lote-row:last-child { border:none; }
+.popup-lote-cod { font-family:monospace; font-weight:700; color:var(--purple); }
+.popup-lote-num { background:#EDE9FE; color:#6B21A8; padding:1px 7px; border-radius:4px; font-weight:700; font-family:monospace; }
+.popup-close { float:right; background:none; border:none; cursor:pointer; color:var(--gray-400); font-size:16px; margin-top:-2px; }
+</style>
+</head>
+<body>
+<div id="sidebar"></div>
+<div class="sidebar-overlay" id="sb-overlay" onclick="closeSidebar()"></div>
+
+<div class="main">
+  <div class="topbar">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <button class="hamburger" onclick="toggleSidebar()">☰</button>
+      <div class="topbar-left">
+        <h1>Traslados</h1>
+        <div class="topbar-sub">Planta → Bodega</div>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <a href="nuevo-traslado.html" class="btn btn-primary">+ Nuevo Traslado</a>
+    </div>
+  </div>
+
+  <div class="content">
+    <!-- Filtros -->
+    <div class="card card-pad" style="margin-bottom:16px;">
+      <div class="toolbar" style="margin:0;">
+        <input type="text" class="search-input" id="search" placeholder="🔍 Buscar por ID, producto, responsable..." oninput="filtrar()">
+        <input type="text" class="filter-select" id="f-lote" placeholder="🏷 Buscar por lote..." oninput="filtrar()" style="min-width:160px;">
+        <select class="filter-select" id="f-estado" onchange="filtrar()">
+          <option value="">Todos los estados</option>
+          <option value="borrador">Borrador</option>
+          <option value="en_transito">En Tránsito</option>
+          <option value="recibido">Recibido</option>
+          <option value="recibido_con_diferencias">Con Diferencias</option>
+          <option value="anulado">Anulado</option>
+        </select>
+        <input type="date" class="filter-select" id="f-desde" onchange="filtrar()" title="Desde">
+        <input type="date" class="filter-select" id="f-hasta" onchange="filtrar()" title="Hasta">
+        <button class="btn btn-secondary" onclick="limpiarFiltros()">Limpiar</button>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <div class="table-header">
+        <span class="table-title" id="tabla-titulo">Todos los traslados</span>
+        <span class="text-sm text-muted" id="tabla-count"></span>
+      </div>
+      <div style="overflow-x:auto;">
+        <table>
+          <thead><tr>
+            <th>ID</th>
+            <th>Fecha</th>
+            <th>Productos</th>
+            <th>Lotes</th>
+            <th>Creado por</th>
+            <th>Estado</th>
+            <th>Ofimática</th>
+            <th>Acciones</th>
+          </tr></thead>
+          <tbody id="tbody-traslados">
+            <tr><td colspan="8" class="table-empty">Cargando...</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="table-footer" id="tabla-footer"></div>
+    </div>
+  </div>
+</div>
+
+<div id="lotes-popup">
+  <button class="popup-close" onclick="cerrarPopup()">✕</button>
+  <h4 id="popup-title">Lotes del traslado</h4>
+  <div id="popup-content"></div>
+</div>
+<script src="rambal.js"></script>
+<script>
+const user = requireAuth();
+renderSidebar('traslados');
+
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('open');
+  document.getElementById('sb-overlay').classList.toggle('open');
+}
+function closeSidebar() {
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('sb-overlay').classList.remove('open');
+}
+
+let allTraslados = [];
+let allItems = [];
+let allUsuarios = [];
+let filtrados = [];
+
+async function load() {
+  try {
+    const [traslados, items, usuarios] = await Promise.all([
+      supaGet('traslados', 'select=*&order=fecha_creacion.desc'),
+      supaGet('traslado_items', 'select=*,productos(id,codigo,nombre,unidad)'),
+      supaGet('usuarios', 'select=id,nombre')
+    ]);
+    allTraslados = traslados || [];
+    allItems     = items     || [];
+    allUsuarios  = usuarios  || [];
+    filtrar();
+  } catch(e) {
+    document.getElementById('tbody-traslados').innerHTML =
+      `<tr><td colspan="7" class="table-empty">Error cargando datos</td></tr>`;
+  }
+}
+
+function getNombreUsuario(id) {
+  const u = allUsuarios.find(u=>u.id===id);
+  return u ? u.nombre : '—';
+}
+
+function filtrar() {
+  const q      = document.getElementById('search').value.toLowerCase();
+  const estado = document.getElementById('f-estado').value;
+  const desde  = document.getElementById('f-desde').value;
+  const hasta  = document.getElementById('f-hasta').value;
+
+  const loteQ = (document.getElementById('f-lote')?.value||'').toLowerCase().trim();
+
+  filtrados = allTraslados.filter(t => {
+    const itemsT  = allItems.filter(i=>i.traslado_id===t.id);
+    const prods   = itemsT.map(i=>i.productos?.nombre||'').join(' ').toLowerCase();
+    const lotesT  = itemsT.map(i=>(i.lote||'').toLowerCase());
+    const matchQ  = !q     || t.codigo?.toLowerCase().includes(q) || prods.includes(q) || getNombreUsuario(t.creado_por).toLowerCase().includes(q);
+    const matchE  = !estado|| t.estado === estado;
+    const matchD  = !desde || t.fecha >= desde;
+    const matchH  = !hasta || t.fecha <= hasta;
+    const matchL  = !loteQ || lotesT.some(l=>l.includes(loteQ));
+    return matchQ && matchE && matchD && matchH && matchL;
+  });
+
+  renderTabla();
+}
+
+function limpiarFiltros() {
+  document.getElementById('search').value = '';
+  document.getElementById('f-estado').value = '';
+  document.getElementById('f-desde').value = '';
+  document.getElementById('f-hasta').value = '';
+  document.getElementById('f-lote').value = '';
+  filtrar();
+}
+
+function renderTabla() {
+  const tbody = document.getElementById('tbody-traslados');
+  document.getElementById('tabla-count').textContent = `${filtrados.length} traslado(s)`;
+  document.getElementById('tabla-footer').textContent = `Mostrando ${filtrados.length} de ${allTraslados.length} traslados`;
+
+  if (!filtrados.length) {
+    tbody.innerHTML = `<tr><td colspan="8" class="table-empty">No se encontraron traslados</td></tr>`;
+    return;
+  }
+
+  const loteQ = (document.getElementById('f-lote')?.value||'').toLowerCase().trim();
+
+  tbody.innerHTML = filtrados.map(t => {
+    const itemsT   = allItems.filter(i=>i.traslado_id===t.id);
+
+    // Productos
+    const prodsArr = itemsT.map(i=>`${i.productos?.codigo||'?'} – ${i.productos?.nombre||'—'}`);
+    const prodsStr = prodsArr.length === 0 ? '—' :
+      prodsArr.slice(0,3).join(' | ') + (prodsArr.length>3 ? ` <span style="color:var(--gray-400);font-size:11px;">+${prodsArr.length-3} más</span>` : '');
+    const prodsTitle = prodsArr.join(', ');
+
+    // Lotes — únicos, resaltar si coincide con búsqueda
+    const lotesUnicos = [...new Set(itemsT.map(i=>i.lote).filter(Boolean))];
+    const lotesHtml = lotesUnicos.length === 0 ? '<span class="text-muted text-sm">—</span>' :
+      lotesUnicos.slice(0,2).map(l => {
+        const resaltar = loteQ && l.toLowerCase().includes(loteQ);
+        return `<span class="lote-tag${resaltar?' lote-resaltado':''}"
+          onclick="event.stopPropagation();mostrarLotesPopup(event,'${t.id}')"
+          title="Clic para ver todos los lotes">${l}</span>`;
+      }).join(' ') +
+      (lotesUnicos.length > 2
+        ? ` <span class="lote-mas" onclick="event.stopPropagation();mostrarLotesPopup(event,'${t.id}')" title="Ver todos">+${lotesUnicos.length-2} más</span>`
+        : '');
+
+    // Ofimática
+    const tieneOfi = t.consecutivo_ofimatica || itemsT.some(i=>i.consecutivo_ofimatica);
+    const consecs  = itemsT.filter(i=>i.consecutivo_ofimatica).map(i=>i.consecutivo_ofimatica);
+    const ofiLabel = t.consecutivo_ofimatica || (consecs.length===1 ? consecs[0] : consecs.length>1 ? consecs[0]+' +'+(consecs.length-1) : '');
+    const ofi = tieneOfi
+      ? `<span style="color:var(--green);font-weight:700;font-size:12px;">✓ ${ofiLabel}</span>`
+      : (t.estado==='recibido'||t.estado==='recibido_con_diferencias')
+        ? `<span style="color:var(--red);font-size:12px;font-weight:600;">Pendiente</span>`
+        : `<span class="text-muted text-sm">—</span>`;
+
+    return `<tr>
+      <td class="cod">${t.codigo}</td>
+      <td class="text-sm">${fmtFecha(t.fecha)}</td>
+      <td style="max-width:220px;font-size:13px;" title="${prodsTitle}">${prodsStr}</td>
+      <td style="max-width:160px;">${lotesHtml}</td>
+      <td class="text-sm">${getNombreUsuario(t.creado_por)}</td>
+      <td>${badgeEstado(t.estado)}</td>
+      <td>${ofi}</td>
+      <td><a href="ver-traslado.html?id=${t.id}" class="btn btn-xs btn-outline-purple">Ver</a></td>
+    </tr>`;
+  }).join('');
+}
+
+function mostrarLotesPopup(e, tid) {
+  const popup = document.getElementById('lotes-popup');
+  const itemsT = allItems.filter(i=>i.traslado_id===tid);
+
+  if (!itemsT.length) return;
+
+  // Agrupar por lote
+  const grupos = {};
+  itemsT.forEach(i => {
+    const lote = i.lote || '(sin lote)';
+    if (!grupos[lote]) grupos[lote] = [];
+    grupos[lote].push({ codigo: i.productos?.codigo||'?', nombre: i.productos?.nombre||'—', cant: i.cantidad_enviada });
+  });
+
+  const traslado = allTraslados.find(t=>t.id===tid);
+  document.getElementById('popup-title').textContent = `Lotes — ${traslado?.codigo||''}`;
+  document.getElementById('popup-content').innerHTML = Object.entries(grupos).map(([lote, prods]) =>
+    prods.map(p => `
+      <div class="popup-lote-row">
+        <div>
+          <span class="popup-lote-cod">${p.codigo}</span>
+          <div style="font-size:11px;color:var(--gray-500);">${p.nombre}</div>
+        </div>
+        <div style="text-align:right;">
+          <span class="popup-lote-num">${lote}</span>
+          <div style="font-size:11px;color:var(--gray-400);margin-top:1px;">${fmtNum(p.cant)}</div>
+        </div>
+      </div>
+    `).join('')
+  ).join('<hr style="border:none;border-top:1.5px dashed var(--gray-200);margin:6px 0;">');
+
+  // Posicionar popup cerca del clic
+  const rect = e.target.getBoundingClientRect();
+  const popW = 320, popH = 300;
+  let left = rect.left + window.scrollX;
+  let top  = rect.bottom + window.scrollY + 6;
+  if (left + popW > window.innerWidth) left = window.innerWidth - popW - 12;
+  if (top + popH > window.innerHeight + window.scrollY) top = rect.top + window.scrollY - popH - 6;
+  popup.style.left = left + 'px';
+  popup.style.top  = top  + 'px';
+  popup.classList.add('open');
+
+  // Cerrar al hacer clic fuera
+  setTimeout(() => document.addEventListener('click', cerrarPopup, {once:true}), 10);
+}
+
+function cerrarPopup() {
+  document.getElementById('lotes-popup').classList.remove('open');
+}
+
+load();
+</script>
+</body>
+</html>

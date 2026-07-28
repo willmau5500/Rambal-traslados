@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rambal – Productos</title>
+<link rel="stylesheet" href="rambal.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+</head>
+<body>
+<div id="sidebar"></div>
+<div class="sidebar-overlay" id="sb-overlay" onclick="closeSidebar()"></div>
+
+<div class="main">
+  <div class="topbar">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <button class="hamburger" onclick="toggleSidebar()">☰</button>
+      <div class="topbar-left">
+        <h1>Productos</h1>
+        <div class="topbar-sub">Catálogo de productos</div>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <button class="btn btn-secondary btn-sm" onclick="descargarPlantilla()">📥 Plantilla Excel</button>
+      <button class="btn btn-secondary btn-sm" onclick="document.getElementById('excel-input').click()">📤 Importar Excel</button>
+      <input type="file" id="excel-input" accept=".xlsx,.xls,.csv" style="display:none" onchange="importarExcel(this)">
+      <button class="btn btn-primary" onclick="abrirNuevo()">+ Nuevo Producto</button>
+    </div>
+  </div>
+
+  <div class="content">
+    <div class="toolbar">
+      <input type="text" class="search-input" id="search" placeholder="🔍 Buscar por código o nombre..." oninput="filtrar()">
+      <select class="filter-select" id="f-activo" onchange="filtrar()">
+        <option value="">Todos</option>
+        <option value="true">Activos</option>
+        <option value="false">Inactivos</option>
+      </select>
+    </div>
+
+    <div class="table-wrap">
+      <div class="table-header">
+        <span class="table-title">Catálogo</span>
+        <span class="text-sm text-muted" id="prod-count"></span>
+      </div>
+      <div style="overflow-x:auto;">
+        <table>
+          <thead><tr>
+            <th>Código</th><th>Nombre del Producto</th><th>Unidad de Empaque</th>
+            <th>Und/Caja</th><th>Estado</th>
+            <th>Acciones</th>
+          </tr></thead>
+          <tbody id="tbody-prods">
+            <tr><td colspan="6" class="table-empty">Cargando...</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="table-footer" id="prod-footer"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Nuevo/Editar -->
+<div class="modal-overlay" id="modal-nuevo">
+  <div class="modal">
+    <div class="modal-header">
+      <div><div class="modal-title" id="modal-nuevo-title">Nuevo Producto</div></div>
+      <button class="modal-close" onclick="closeModal('modal-nuevo')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="modal-error" class="form-error-msg" style="display:none;"></div>
+      <input type="hidden" id="edit-id">
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label">Código <span class="required">*</span></label>
+          <input type="text" class="form-input" id="f-codigo" placeholder="Ej: 3110">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Nombre del Producto <span class="required">*</span></label>
+          <input type="text" class="form-input" id="f-nombre" placeholder="Ej: Dosificador SR Blanco">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Unidad de Empaque <span class="required">*</span></label>
+          <input type="text" class="form-input" id="f-unidad" placeholder="Ej: Unidades, Kg, Piezas" list="unidades-list">
+          <datalist id="unidades-list">
+            <option>Unidades</option><option>Kg</option><option>Piezas</option>
+            <option>Bulto</option><option>Caja</option><option>Saco</option>
+          </datalist>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Cantidad por Caja <span class="required">*</span></label>
+          <input type="number" class="form-input" id="f-cant-caja" placeholder="Ej: 3000" min="1" step="1">
+          <div class="form-hint">Unidades que trae cada caja</div>
+        </div>
+
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-nuevo')">Cancelar</button>
+      <button class="btn btn-primary" onclick="guardarProducto()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal preview importación -->
+<div class="modal-overlay" id="modal-import">
+  <div class="modal" style="max-width:700px;">
+    <div class="modal-header">
+      <div><div class="modal-title">📤 Vista Previa Importación</div><div class="modal-sub" id="import-sub"></div></div>
+      <button class="modal-close" onclick="closeModal('modal-import')">✕</button>
+    </div>
+    <div class="modal-body" style="max-height:400px;overflow-y:auto;">
+      <div id="import-preview"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-import')">Cancelar</button>
+      <button class="btn btn-purple" onclick="confirmarImport()">Importar</button>
+    </div>
+  </div>
+</div>
+
+<script src="rambal.js"></script>
+<script>
+const user = requireAuth();
+renderSidebar('productos');
+function toggleSidebar() { document.getElementById('sidebar').classList.toggle('open'); document.getElementById('sb-overlay').classList.toggle('open'); }
+function closeSidebar() { document.getElementById('sidebar').classList.remove('open'); document.getElementById('sb-overlay').classList.remove('open'); }
+
+let allProds = [], filtrados = [], pendingImport = [];
+
+async function load() {
+  try {
+    allProds = await supaGet('productos','select=*&order=codigo.asc') || [];
+    filtrar();
+  } catch(e) { toast('Error cargando productos','err'); }
+}
+
+function filtrar() {
+  const q = document.getElementById('search').value.toLowerCase();
+  const ac = document.getElementById('f-activo').value;
+  filtrados = allProds.filter(p => {
+    const mq = !q || p.codigo?.toLowerCase().includes(q) || p.nombre?.toLowerCase().includes(q);
+    const ma = ac==='' || String(p.activo)===ac;
+    return mq && ma;
+  });
+  renderTabla();
+}
+
+function renderTabla() {
+  const tbody = document.getElementById('tbody-prods');
+  document.getElementById('prod-count').textContent = `${filtrados.length} producto(s)`;
+  document.getElementById('prod-footer').textContent = `${filtrados.length} de ${allProds.length} productos`;
+  if (!filtrados.length) { tbody.innerHTML=`<tr><td colspan="6" class="table-empty">No se encontraron productos</td></tr>`; return; }
+  tbody.innerHTML = filtrados.map(p=>`
+    <tr>
+      <td class="cod">${p.codigo}</td>
+      <td><strong>${p.nombre}</strong></td>
+      <td class="text-sm">${p.unidad}</td>
+      <td><strong style="color:var(--purple);">${fmtNum(p.cantidad_por_caja||1)}</strong> <span class="text-sm text-muted">${p.unidad}/caja</span></td>
+      <td><span class="badge" style="background:${p.activo?'var(--green-bg)':'var(--gray-100)'};color:${p.activo?'var(--green)':'var(--gray-500)'}">${p.activo?'Activo':'Inactivo'}</span></td>
+      <td style="display:flex;gap:6px;">
+        ${['admin'].includes(user.rol) ? `
+          <button class="btn btn-xs btn-outline-purple" onclick="editarProducto('${p.id}')">Editar</button>
+          <button class="btn btn-xs ${p.activo?'btn-danger':'btn-secondary'}" onclick="toggleActivo('${p.id}',${p.activo})">${p.activo?'Desactivar':'Activar'}</button>
+        ` : '<span class="text-muted text-sm">—</span>'}
+      </td>
+    </tr>
+  `).join('');
+}
+
+function abrirNuevo() {
+  document.getElementById('modal-nuevo-title').textContent='Nuevo Producto';
+  document.getElementById('edit-id').value='';
+  ['codigo','nombre','unidad'].forEach(f=>document.getElementById(`f-${f}`).value='');
+  document.getElementById('f-cant-caja').value='';
+  document.getElementById('modal-error').style.display='none';
+  openModal('modal-nuevo');
+}
+
+function editarProducto(id) {
+  const p = allProds.find(p=>p.id===id);
+  if (!p) return;
+  document.getElementById('modal-nuevo-title').textContent='Editar Producto';
+  document.getElementById('edit-id').value=p.id;
+  document.getElementById('f-codigo').value=p.codigo||'';
+  document.getElementById('f-nombre').value=p.nombre||'';
+  document.getElementById('f-unidad').value=p.unidad||'';
+  document.getElementById('f-cant-caja').value=p.cantidad_por_caja||'';
+
+  document.getElementById('modal-error').style.display='none';
+  openModal('modal-nuevo');
+}
+
+async function guardarProducto() {
+  const errDiv=document.getElementById('modal-error');
+  const id=document.getElementById('edit-id').value;
+  const codigo=document.getElementById('f-codigo').value.trim();
+  const nombre=document.getElementById('f-nombre').value.trim();
+  const unidad=document.getElementById('f-unidad').value.trim();
+  const cantCaja=parseFloat(document.getElementById('f-cant-caja').value)||1;
+  if(!codigo||!nombre||!unidad){errDiv.style.display='block';errDiv.textContent='Código, nombre y unidad son obligatorios.';return;}
+  errDiv.style.display='none';
+  try {
+    if(id){
+      await supaPatch('productos',`id=eq.${id}`,{codigo,nombre,unidad,cantidad_por_caja:cantCaja});
+      toast('Producto actualizado','ok');
+    }else{
+      await supaPost('productos',{codigo,nombre,unidad,cantidad_por_caja:cantCaja,activo:true});
+      toast('Producto creado','ok');
+    }
+    closeModal('modal-nuevo'); load();
+  }catch(e){errDiv.style.display='block';errDiv.textContent='Error: '+e.message;}
+}
+
+async function toggleActivo(id,activo){
+  try{await supaPatch('productos',`id=eq.${id}`,{activo:!activo});toast(!activo?'Activado':'Desactivado','ok');load();}
+  catch(e){toast('Error','err');}
+}
+
+function descargarPlantilla() {
+  const wb=XLSX.utils.book_new();
+  const ws=XLSX.utils.aoa_to_sheet([
+    ['codigo','nombre del producto','unidad de empaque','cantidad por caja'],
+    ['3110','Dosificador SR Blanco','Unidades','3000'],
+  ]);
+  XLSX.utils.book_append_sheet(wb,ws,'Productos');
+  XLSX.writeFile(wb,'plantilla_productos_rambal.xlsx');
+}
+
+function importarExcel(input) {
+  const file=input.files[0]; if(!file) return;
+  const reader=new FileReader();
+  reader.onload=e=>{
+    const wb=XLSX.read(e.target.result,{type:'binary'});
+    const ws=wb.Sheets[wb.SheetNames[0]];
+    const rows=XLSX.utils.sheet_to_json(ws);
+    pendingImport=rows.filter(r=>r.codigo&&r['nombre del producto']&&r['unidad de empaque']).map(r=>({
+      codigo:String(r.codigo).trim(),
+      nombre:String(r['nombre del producto']).trim(),
+      unidad:String(r['unidad de empaque']).trim(),
+      cantidad_por_caja:parseFloat(r['cantidad por caja'])||1,
+      activo:true
+    }));
+    if(!pendingImport.length){toast('No se encontraron filas válidas','err');return;}
+    document.getElementById('import-sub').textContent=`${pendingImport.length} producto(s) listos para importar`;
+    document.getElementById('import-preview').innerHTML=`
+      <table><thead><tr><th>Código</th><th>Nombre</th><th>Unidad</th><th>Und/Caja</th></tr></thead>
+      <tbody>${pendingImport.slice(0,20).map(r=>`<tr><td class="cod">${r.codigo}</td><td>${r.nombre}</td><td>${r.unidad}</td><td><strong>${fmtNum(r.cantidad_por_caja)}</strong></td></tr>`).join('')}
+      ${pendingImport.length>20?`<tr><td colspan="5" class="text-muted" style="padding:8px 14px;">...y ${pendingImport.length-20} más</td></tr>`:''}
+      </tbody></table>`;
+    openModal('modal-import');
+  };
+  reader.readAsBinaryString(file);
+  input.value='';
+}
+
+async function confirmarImport(){
+  try{
+    await supaPost('productos',pendingImport);
+    await supaPost('importaciones',{usuario_id:user.id,nombre_archivo:'importacion.xlsx',total_registros:pendingImport.length,fecha:new Date().toISOString()});
+    toast(`${pendingImport.length} productos importados`,'ok');
+    closeModal('modal-import'); load();
+  }catch(e){toast('Error importando: '+e.message,'err');}
+}
+
+load();
+</script>
+</body>
+</html>

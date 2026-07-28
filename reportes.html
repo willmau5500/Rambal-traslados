@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rambal – Reportes</title>
+<link rel="stylesheet" href="rambal.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+</head>
+<body>
+<div id="sidebar"></div>
+<div class="sidebar-overlay" id="sb-overlay" onclick="closeSidebar()"></div>
+
+<div class="main">
+  <div class="topbar">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <button class="hamburger" onclick="toggleSidebar()">☰</button>
+      <div class="topbar-left"><h1>Reportes</h1><div class="topbar-sub">Análisis y exportación</div></div>
+    </div>
+    <div class="topbar-actions">
+      <button class="btn btn-secondary" onclick="window.print()">🖨️ Exportar PDF</button>
+    </div>
+  </div>
+
+  <div class="content">
+    <!-- Filtros -->
+    <div class="card card-pad" style="margin-bottom:20px;">
+      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;">
+        <div class="form-group">
+          <label class="form-label">Desde</label>
+          <input type="date" class="form-input" id="f-desde" style="min-width:140px;">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Hasta</label>
+          <input type="date" class="form-input" id="f-hasta" style="min-width:140px;">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Estado</label>
+          <select class="form-select" id="f-estado">
+            <option value="">Todos</option>
+            <option value="en_transito">En Tránsito</option>
+            <option value="recibido">Recibido</option>
+            <option value="recibido_con_diferencias">Con Diferencias</option>
+            <option value="anulado">Anulado</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Usuario</label>
+          <select class="form-select" id="f-usuario">
+            <option value="">Todos</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Producto</label>
+          <select class="form-select" id="f-producto" style="min-width:180px;">
+            <option value="">Todos</option>
+          </select>
+        </div>
+        <button class="btn btn-primary" onclick="generar()">Generar</button>
+        <button class="btn btn-secondary" onclick="limpiar()">Limpiar</button>
+      </div>
+    </div>
+
+    <div id="reporte-contenido" style="display:none;">
+      <!-- Stats -->
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px;" id="rep-stats"></div>
+
+      <!-- Charts -->
+      <div class="grid-2" style="margin-bottom:20px;">
+        <div class="card card-pad">
+          <div class="section-title">Traslados por estado</div>
+          <canvas id="chart-estados" style="max-height:220px;"></canvas>
+        </div>
+        <div class="card card-pad">
+          <div class="section-title">Top 5 Productos</div>
+          <canvas id="chart-prods" style="max-height:220px;"></canvas>
+        </div>
+      </div>
+
+      <!-- Tabla detalle -->
+      <div class="table-wrap">
+        <div class="table-header">
+          <span class="table-title">Detalle del Período</span>
+          <span class="text-sm text-muted" id="rep-total"></span>
+        </div>
+        <div style="overflow-x:auto;">
+          <table>
+            <thead><tr>
+              <th>ID</th><th>Fecha</th><th>Productos</th><th>Creado por</th>
+              <th>Estado</th><th>Ofimática</th><th>Diferencias</th>
+            </tr></thead>
+            <tbody id="tbody-rep"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div id="reporte-empty" style="text-align:center;padding:3rem;color:var(--gray-400);">
+      <div style="font-size:40px;margin-bottom:12px;">📊</div>
+      <div>Seleccioná un rango de fechas y hacé clic en <strong>Generar</strong></div>
+    </div>
+  </div>
+</div>
+
+<script src="rambal.js"></script>
+<script>
+const user = requireAuth();
+renderSidebar('reportes');
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('open');
+  document.getElementById('sb-overlay').classList.toggle('open');
+}
+function closeSidebar() {
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('sb-overlay').classList.remove('open');
+}
+
+// Defaults
+const hoy = new Date().toISOString().split('T')[0];
+const inicioMes = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0];
+document.getElementById('f-desde').value = inicioMes;
+document.getElementById('f-hasta').value = hoy;
+
+let chartE = null, chartP = null;
+
+async function init() {
+  const [usuarios, productos] = await Promise.all([
+    supaGet('usuarios','select=id,nombre'),
+    supaGet('productos','select=id,nombre&activo=eq.true&order=nombre.asc')
+  ]);
+  const selU = document.getElementById('f-usuario');
+  const selP = document.getElementById('f-producto');
+  (usuarios||[]).forEach(u=>{ const o=document.createElement('option'); o.value=u.id; o.textContent=u.nombre; selU.appendChild(o); });
+  (productos||[]).forEach(p=>{ const o=document.createElement('option'); o.value=p.id; o.textContent=p.nombre; selP.appendChild(o); });
+}
+
+async function generar() {
+  const desde   = document.getElementById('f-desde').value;
+  const hasta   = document.getElementById('f-hasta').value;
+  const estado  = document.getElementById('f-estado').value;
+  const usuId   = document.getElementById('f-usuario').value;
+  const prodId  = document.getElementById('f-producto').value;
+  if (!desde||!hasta) { toast('Seleccioná rango de fechas','err'); return; }
+
+  let q = `fecha=gte.${desde}&fecha=lte.${hasta}&select=*`;
+  if (estado) q+=`&estado=eq.${estado}`;
+  if (usuId)  q+=`&creado_por=eq.${usuId}`;
+
+  try {
+    let [traslados, items, usuarios] = await Promise.all([
+      supaGet('traslados', q),
+      supaGet('traslado_items','select=*,productos(id,nombre,unidad)'),
+      supaGet('usuarios','select=id,nombre')
+    ]);
+    traslados = traslados||[];
+    items     = items||[];
+    usuarios  = usuarios||[];
+
+    // Filtrar por producto si aplica
+    if (prodId) {
+      const tidsConProd = [...new Set(items.filter(i=>i.producto_id===prodId).map(i=>i.traslado_id))];
+      traslados = traslados.filter(t=>tidsConProd.includes(t.id));
+    }
+
+    const getNombre = id => usuarios.find(u=>u.id===id)?.nombre||'—';
+
+    // Stats
+    const totalUnidades = items.filter(i=>traslados.some(t=>t.id===i.traslado_id))
+      .reduce((s,i)=>s+Number(i.cantidad_enviada||0),0);
+    const conDif = traslados.filter(t=>t.estado==='recibido_con_diferencias').length;
+    const penOfi = traslados.filter(t=>(t.estado==='recibido'||t.estado==='recibido_con_diferencias')&&!t.consecutivo_ofimatica).length;
+
+    document.getElementById('rep-stats').innerHTML = `
+      <div class="stat-card" style="--accent:var(--purple)"><div class="stat-icon">📋</div><div class="stat-val">${traslados.length}</div><div class="stat-label">Total traslados</div></div>
+      <div class="stat-card" style="--accent:var(--green)"><div class="stat-icon">📦</div><div class="stat-val">${fmtNum(totalUnidades)}</div><div class="stat-label">Unidades trasladadas</div></div>
+      <div class="stat-card" style="--accent:var(--red)"><div class="stat-icon">⚠️</div><div class="stat-val">${conDif}</div><div class="stat-label">Con diferencias</div></div>
+      <div class="stat-card" style="--accent:var(--yellow)"><div class="stat-icon">🗂️</div><div class="stat-val">${penOfi}</div><div class="stat-label">Pend. Ofimática</div></div>
+    `;
+
+    // Chart estados
+    const porEstado = {};
+    traslados.forEach(t=>{ porEstado[t.estado]=(porEstado[t.estado]||0)+1; });
+    if (chartE) chartE.destroy();
+    chartE = new Chart(document.getElementById('chart-estados').getContext('2d'),{
+      type:'doughnut',
+      data:{
+        labels: Object.keys(porEstado).map(k=>ESTADOS[k]?.label||k),
+        datasets:[{
+          data: Object.values(porEstado),
+          backgroundColor:['#6B21A8','#D97706','#059669','#DC2626','#9CA3AF'],
+          borderWidth:2, borderColor:'#fff'
+        }]
+      },
+      options:{ plugins:{ legend:{ position:'right' } }, responsive:true, maintainAspectRatio:false }
+    });
+
+    // Chart top productos
+    const porProd = {};
+    items.filter(i=>traslados.some(t=>t.id===i.traslado_id)).forEach(i=>{
+      const n=i.productos?.nombre||'—';
+      porProd[n]=(porProd[n]||0)+Number(i.cantidad_enviada||0);
+    });
+    const top5 = Object.entries(porProd).sort((a,b)=>b[1]-a[1]).slice(0,5);
+    if (chartP) chartP.destroy();
+    chartP = new Chart(document.getElementById('chart-prods').getContext('2d'),{
+      type:'bar',
+      data:{
+        labels: top5.map(([n])=>n.length>20?n.slice(0,18)+'…':n),
+        datasets:[{
+          label:'Unidades',
+          data: top5.map(([,v])=>v),
+          backgroundColor:'rgba(107,33,168,.8)', borderRadius:6, borderSkipped:false
+        }]
+      },
+      options:{ plugins:{legend:{display:false}}, responsive:true, maintainAspectRatio:false,
+        scales:{ y:{beginAtZero:true, grid:{color:'#F3F4F6'}}, x:{grid:{display:false}} } }
+    });
+
+    // Tabla
+    document.getElementById('rep-total').textContent=`${traslados.length} traslados`;
+    const tbody = document.getElementById('tbody-rep');
+    tbody.innerHTML = traslados.map(t=>{
+      const its = items.filter(i=>i.traslado_id===t.id);
+      const prods = its.map(i=>i.productos?.nombre||'—').join(', ');
+      const hayDif = its.some(i=>Number(i.diferencia||0)<0);
+      return `<tr onclick="window.location='ver-traslado.html?id=${t.id}'" style="cursor:pointer;">
+        <td class="cod">${t.codigo}</td>
+        <td class="text-sm">${fmtFecha(t.fecha)}</td>
+        <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${prods}">${prods}</td>
+        <td class="text-sm">${getNombre(t.creado_por)}</td>
+        <td>${badgeEstado(t.estado)}</td>
+        <td class="text-sm">${t.consecutivo_ofimatica||its.some(i=>i.consecutivo_ofimatica)?'<span style="color:var(--green);font-weight:700;">✓</span>':'<span class="text-muted">—</span>'}</td>
+        <td>${hayDif?'<span style="color:var(--red);font-weight:700;">⚠ Sí</span>':'<span class="text-muted text-sm">—</span>'}</td>
+      </tr>`;
+    }).join('') || `<tr><td colspan="7" class="table-empty">Sin resultados</td></tr>`;
+
+    document.getElementById('reporte-contenido').style.display='block';
+    document.getElementById('reporte-empty').style.display='none';
+  } catch(e) { toast('Error generando reporte: '+e.message,'err'); }
+}
+
+function limpiar() {
+  document.getElementById('f-desde').value=inicioMes;
+  document.getElementById('f-hasta').value=hoy;
+  document.getElementById('f-estado').value='';
+  document.getElementById('f-usuario').value='';
+  document.getElementById('f-producto').value='';
+  document.getElementById('reporte-contenido').style.display='none';
+  document.getElementById('reporte-empty').style.display='block';
+}
+
+init();
+</script>
+</body>
+</html>

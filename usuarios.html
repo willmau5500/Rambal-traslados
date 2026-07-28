@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rambal – Usuarios</title>
+<link rel="stylesheet" href="rambal.css">
+</head>
+<body>
+<div id="sidebar"></div>
+<div class="sidebar-overlay" id="sb-overlay" onclick="closeSidebar()"></div>
+
+<div class="main">
+  <div class="topbar">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <button class="hamburger" onclick="toggleSidebar()">☰</button>
+      <div class="topbar-left"><h1>Usuarios</h1><div class="topbar-sub">Gestión de accesos</div></div>
+    </div>
+    <div class="topbar-actions">
+      <button class="btn btn-primary" onclick="openModal('modal-usuario')">+ Nuevo Usuario</button>
+    </div>
+  </div>
+
+  <div class="content">
+    <div style="display:grid;grid-template-columns:1fr 360px;gap:20px;align-items:start;">
+
+      <div class="table-wrap">
+        <div class="table-header"><span class="table-title">Usuarios del sistema</span></div>
+        <table>
+          <thead><tr><th>Nombre</th><th>Usuario</th><th>Rol</th><th>Estado</th><th>Creado</th><th>Acciones</th></tr></thead>
+          <tbody id="tbody-users">
+            <tr><td colspan="6" class="table-empty">Cargando...</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card card-pad">
+        <div class="section-title" style="margin-bottom:16px;">Roles del sistema</div>
+        ${Object.entries(ROLES_DESC||{}).map(([rol,desc])=>`
+          <div style="margin-bottom:14px;">
+            <div style="font-weight:700;font-size:13px;color:var(--black);margin-bottom:3px;">${ROLES[rol]||rol}</div>
+            <div style="font-size:12px;color:var(--gray-500);">${desc}</div>
+          </div>
+        `).join('')||''}
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- Modal nuevo usuario -->
+<div class="modal-overlay" id="modal-usuario">
+  <div class="modal">
+    <div class="modal-header">
+      <div><div class="modal-title">Nuevo Usuario</div></div>
+      <button class="modal-close" onclick="closeModal('modal-usuario')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="user-error" class="form-error-msg" style="display:none;"></div>
+      <div class="form-grid">
+        <div class="form-group form-full">
+          <label class="form-label">Nombre completo <span class="required">*</span></label>
+          <input type="text" class="form-input" id="u-nombre" placeholder="Ej: Juan Pérez">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Usuario <span class="required">*</span></label>
+          <input type="text" class="form-input" id="u-username" placeholder="Ej: jperez">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Contraseña <span class="required">*</span></label>
+          <input type="password" class="form-input" id="u-password" placeholder="••••••••">
+        </div>
+        <div class="form-group form-full">
+          <label class="form-label">Rol <span class="required">*</span></label>
+          <select class="form-select" id="u-rol">
+            <option value="operario_planta">Operario Planta</option>
+            <option value="bodeguero">Bodeguero</option>
+            <option value="asistente_operaciones">Asistente Operaciones</option>
+            <option value="admin">Administrador</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-usuario')">Cancelar</button>
+      <button class="btn btn-primary" onclick="crearUsuario()">Crear Usuario</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal cambiar contraseña -->
+<div class="modal-overlay" id="modal-pass">
+  <div class="modal" style="max-width:400px;">
+    <div class="modal-header">
+      <div><div class="modal-title">Cambiar Contraseña</div></div>
+      <button class="modal-close" onclick="closeModal('modal-pass')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="pass-uid">
+      <div class="form-group">
+        <label class="form-label">Nueva contraseña</label>
+        <input type="password" class="form-input" id="pass-nueva" placeholder="••••••••">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-pass')">Cancelar</button>
+      <button class="btn btn-primary" onclick="cambiarPass()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<script src="rambal.js"></script>
+<script>
+const ROLES_DESC = {
+  admin: 'Acceso total: gestión de usuarios, productos, traslados y reportes.',
+  operario_planta: 'Crea traslados y confirma la salida de productos desde planta.',
+  bodeguero: 'Recibe la mercancía y registra las cantidades recibidas con diferencias.',
+  asistente_operaciones: 'Registra el consecutivo de Ofimática tras la recepción.'
+};
+
+const user = requireAuth();
+if (user.rol !== 'admin') window.location.href = 'dashboard.html';
+renderSidebar('usuarios');
+
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('open');
+  document.getElementById('sb-overlay').classList.toggle('open');
+}
+function closeSidebar() {
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('sb-overlay').classList.remove('open');
+}
+
+// Rerender roles desc
+document.querySelector('.card.card-pad .section-title').nextElementSibling?.remove();
+const card = document.querySelector('.card.card-pad');
+Object.entries(ROLES_DESC).forEach(([rol,desc])=>{
+  const div=document.createElement('div');
+  div.style.cssText='margin-bottom:14px;';
+  div.innerHTML=`<div style="font-weight:700;font-size:13px;color:var(--black);margin-bottom:3px;">${ROLES[rol]||rol}</div><div style="font-size:12px;color:var(--gray-500);">${desc}</div>`;
+  card.appendChild(div);
+});
+
+let allUsers = [];
+
+async function load() {
+  try {
+    allUsers = await supaGet('usuarios','select=*&order=creado_en.desc') || [];
+    renderTabla();
+  } catch(e) { toast('Error','err'); }
+}
+
+function renderTabla() {
+  const tbody = document.getElementById('tbody-users');
+  if (!allUsers.length) { tbody.innerHTML=`<tr><td colspan="6" class="table-empty">Sin usuarios</td></tr>`; return; }
+  tbody.innerHTML = allUsers.map(u=>`
+    <tr>
+      <td><strong>${u.nombre}</strong></td>
+      <td class="cod" style="font-size:13px;">${u.username}</td>
+      <td><span class="badge" style="background:var(--purple-pale);color:var(--purple)">${ROLES[u.rol]||u.rol}</span></td>
+      <td><span class="badge" style="background:${u.activo?'var(--green-bg)':'var(--gray-100)'};color:${u.activo?'var(--green)':'var(--gray-500)'}">${u.activo?'Activo':'Inactivo'}</span></td>
+      <td class="text-sm text-muted">${fmtFecha(u.creado_en)}</td>
+      <td style="display:flex;gap:6px;">
+        <button class="btn btn-xs btn-outline-purple" onclick="abrirPass('${u.id}')">Contraseña</button>
+        ${u.id!==user.id?`<button class="btn btn-xs ${u.activo?'btn-danger':'btn-secondary'}" onclick="toggleUser('${u.id}',${u.activo})">${u.activo?'Desactivar':'Activar'}</button>`:'<span class="text-sm text-muted">Tú</span>'}
+      </td>
+    </tr>
+  `).join('');
+}
+
+async function crearUsuario() {
+  const errDiv = document.getElementById('user-error');
+  const nombre   = document.getElementById('u-nombre').value.trim();
+  const username = document.getElementById('u-username').value.trim();
+  const password = document.getElementById('u-password').value;
+  const rol      = document.getElementById('u-rol').value;
+
+  if (!nombre||!username||!password) { errDiv.style.display='block'; errDiv.textContent='Todos los campos son obligatorios.'; return; }
+  errDiv.style.display='none';
+  try {
+    const hash = await sha256(password);
+    await supaPost('usuarios',{ nombre, username, password: hash, rol, activo: true });
+    toast('Usuario creado','ok');
+    closeModal('modal-usuario');
+    ['u-nombre','u-username','u-password'].forEach(id=>document.getElementById(id).value='');
+    load();
+  } catch(e) { errDiv.style.display='block'; errDiv.textContent='Error: el usuario ya existe o datos inválidos.'; }
+}
+
+async function toggleUser(id, activo) {
+  try {
+    await supaPatch('usuarios',`id=eq.${id}`,{ activo: !activo });
+    toast(!activo?'Usuario activado':'Usuario desactivado','ok'); load();
+  } catch(e) { toast('Error','err'); }
+}
+
+function abrirPass(id) {
+  document.getElementById('pass-uid').value=id;
+  document.getElementById('pass-nueva').value='';
+  openModal('modal-pass');
+}
+
+async function cambiarPass() {
+  const id = document.getElementById('pass-uid').value;
+  const pw = document.getElementById('pass-nueva').value;
+  if (!pw||pw.length<4) { toast('La contraseña debe tener al menos 4 caracteres','err'); return; }
+  try {
+    const hash=await sha256(pw);
+    await supaPatch('usuarios',`id=eq.${id}`,{password:hash});
+    toast('Contraseña actualizada','ok'); closeModal('modal-pass');
+  } catch(e) { toast('Error','err'); }
+}
+
+load();
+</script>
+</body>
+</html>

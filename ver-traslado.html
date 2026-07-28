@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rambal – Ver Traslado</title>
+<link rel="stylesheet" href="rambal.css">
+</head>
+<body>
+<div id="sidebar"></div>
+<div class="sidebar-overlay" id="sb-overlay" onclick="closeSidebar()"></div>
+
+<div class="main">
+  <div class="topbar">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <button class="hamburger" onclick="toggleSidebar()">☰</button>
+      <div class="topbar-left">
+        <h1 id="page-title">Traslado</h1>
+        <div class="topbar-sub" id="page-sub"></div>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <button class="btn btn-secondary btn-sm" onclick="window.print()">🖨️ Imprimir</button>
+      <a href="traslados.html" class="btn btn-secondary">← Volver</a>
+    </div>
+  </div>
+
+  <div class="content" id="main-content">
+    <div style="text-align:center;padding:3rem;color:var(--gray-400)">Cargando...</div>
+  </div>
+</div>
+
+<!-- Modal recibir -->
+<div class="modal-overlay" id="modal-recibir">
+  <div class="modal">
+    <div class="modal-header">
+      <div><div class="modal-title">📥 Recibir Mercancía</div><div class="modal-sub">Confirmá las cantidades recibidas</div></div>
+      <button class="modal-close" onclick="closeModal('modal-recibir')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="recibir-items"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-recibir')">Cancelar</button>
+      <button class="btn btn-purple" onclick="confirmarRecepcion()">Confirmar Recepción</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal ofimática -->
+<div class="modal-overlay" id="modal-ofimatica">
+  <div class="modal">
+    <div class="modal-header">
+      <div><div class="modal-title">🗂️ Registrar en Ofimática</div><div class="modal-sub">Ingresá el consecutivo asignado por Ofimática</div></div>
+      <button class="modal-close" onclick="closeModal('modal-ofimatica')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="ofi-items-container"></div>
+      <div class="form-group mt-4">
+        <label class="form-label">Consecutivo general del traslado (opcional)</label>
+        <input type="text" class="form-input" id="ofi-consecutivo-general" placeholder="Ej: OF-2026-1234">
+        <div class="form-hint">Usalo si subiste todos los productos juntos. Si los subiste por separado, completá el campo en cada producto arriba.</div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-ofimatica')">Cancelar</button>
+      <button class="btn btn-purple" onclick="confirmarOfimatica()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<script src="rambal.js"></script>
+<script>
+const user = requireAuth();
+renderSidebar('traslados');
+
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('open');
+  document.getElementById('sb-overlay').classList.toggle('open');
+}
+function closeSidebar() {
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('sb-overlay').classList.remove('open');
+}
+
+const params = new URLSearchParams(location.search);
+const tid = params.get('id');
+if (!tid) window.location.href = 'traslados.html';
+
+let traslado = null;
+let items = [];
+let usuarios = [];
+let trazabilidad = [];
+let trazDetalles = [];
+
+async function load() {
+  try {
+    const [ts, its, us, trz, trzd] = await Promise.all([
+      supaGet('traslados', `id=eq.${tid}&select=*`),
+      supaGet('traslado_items', `traslado_id=eq.${tid}&select=*,productos(id,codigo,nombre,unidad)`),
+      supaGet('usuarios', 'select=id,nombre,rol'),
+      supaGet('trazabilidad', `traslado_id=eq.${tid}&select=*&order=fecha_hora.asc`),
+      supaGet('trazabilidad_detalles', `select=*,trazabilidad(traslado_id),productos(nombre,unidad)`)
+    ]);
+    traslado   = ts?.[0];
+    items      = its   || [];
+    usuarios   = us    || [];
+    trazabilidad = trz || [];
+    trazDetalles = trzd?.filter(d=>trazabilidad.some(t=>t.id===d.trazabilidad_id)) || [];
+
+    if (!traslado) { window.location.href='traslados.html'; return; }
+
+    document.getElementById('page-title').textContent = traslado.codigo;
+    document.getElementById('page-sub').textContent   = `Estado: ${ESTADOS[traslado.estado]?.label || traslado.estado}`;
+    render();
+  } catch(e) {
+    document.getElementById('main-content').innerHTML = `<div style="text-align:center;padding:3rem;color:var(--red)">Error cargando traslado</div>`;
+  }
+}
+
+function getNombre(id) { return usuarios.find(u=>u.id===id)?.nombre || '—'; }
+
+function render() {
+  const e = ESTADOS[traslado.estado] || {};
+  const canConfirmarSalida  = traslado.estado==='borrador' && ['admin','operario_planta'].includes(user.rol);
+  const canRecibir          = traslado.estado==='en_transito' && ['admin','bodeguero'].includes(user.rol);
+  const canOfimatica        = (traslado.estado==='recibido'||traslado.estado==='recibido_con_diferencias') &&
+                               ['admin','asistente_operaciones'].includes(user.rol) && !traslado.consecutivo_ofimatica &&
+                               !items.every(i=>i.consecutivo_ofimatica);
+  const canAnular           = ['borrador','en_transito'].includes(traslado.estado) && user.rol==='admin';
+
+  document.getElementById('main-content').innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 340px;gap:20px;align-items:start;">
+
+      <!-- LEFT -->
+      <div>
+        <!-- Encabezado -->
+        <div class="card" style="margin-bottom:16px;">
+          <div class="card-header">
+            <div style="display:flex;align-items:center;gap:12px;">
+              <span class="cod" style="font-size:18px;">${traslado.codigo}</span>
+              ${badgeEstado(traslado.estado)}
+            </div>
+            <div style="display:flex;gap:8px;">
+              ${canConfirmarSalida ? `<button class="btn btn-purple btn-sm" onclick="confirmarSalida()">🚚 Confirmar Salida</button>` : ''}
+              ${canRecibir         ? `<button class="btn btn-sm" style="background:var(--green);color:white;" onclick="abrirRecibir()">📥 Recibir</button>` : ''}
+              ${canOfimatica       ? `<button class="btn btn-sm" style="background:var(--blue);color:white;" onclick="abrirOfimatica()">🗂️ Registrar Ofimática</button>` : ''}
+              ${canAnular          ? `<button class="btn btn-danger btn-sm" onclick="anular()">🚫 Anular</button>` : ''}
+            </div>
+          </div>
+          <div class="card-body">
+            <div class="detail-grid">
+              <div class="detail-row"><span class="detail-key">Fecha</span><span class="detail-val">${fmtFecha(traslado.fecha)}</span></div>
+              <div class="detail-row"><span class="detail-key">Creado por</span><span class="detail-val">${getNombre(traslado.creado_por)}</span></div>
+              <div class="detail-row"><span class="detail-key">Fecha creación</span><span class="detail-val">${fmtDateTime(traslado.fecha_creacion)}</span></div>
+              ${traslado.confirmado_salida_por ? `<div class="detail-row"><span class="detail-key">Salida confirmada por</span><span class="detail-val">${getNombre(traslado.confirmado_salida_por)}</span></div>` : ''}
+              ${traslado.fecha_salida ? `<div class="detail-row"><span class="detail-key">Fecha salida</span><span class="detail-val">${fmtDateTime(traslado.fecha_salida)}</span></div>` : ''}
+              ${traslado.recibido_por ? `<div class="detail-row"><span class="detail-key">Recibido por</span><span class="detail-val">${getNombre(traslado.recibido_por)}</span></div>` : ''}
+              ${traslado.fecha_recepcion ? `<div class="detail-row"><span class="detail-key">Fecha recepción</span><span class="detail-val">${fmtDateTime(traslado.fecha_recepcion)}</span></div>` : ''}
+              ${traslado.registrado_ofimatica_por ? `<div class="detail-row"><span class="detail-key">Reg. Ofimática por</span><span class="detail-val">${getNombre(traslado.registrado_ofimatica_por)}</span></div>` : ''}
+              ${traslado.consecutivo_ofimatica ? `<div class="detail-row"><span class="detail-key">Consec. Ofimática</span><span class="detail-val" style="color:var(--green);font-weight:700;">${traslado.consecutivo_ofimatica}</span></div>` : ''}
+              ${traslado.observaciones ? `<div class="detail-row"><span class="detail-key">Observaciones</span><span class="detail-val">${traslado.observaciones}</span></div>` : ''}
+            </div>
+          </div>
+        </div>
+
+        <!-- Items -->
+        <div class="table-wrap" style="margin-bottom:16px;">
+          <div class="table-header"><span class="table-title">Productos del Traslado</span></div>
+          <table>
+            <thead><tr>
+              <th>Código</th><th>Producto</th><th>Lote</th><th>Enviado</th><th>Recibido</th><th>Diferencia</th><th>Consec. Ofimática</th><th>Obs. Diferencia</th>
+            </tr></thead>
+            <tbody>
+              ${items.map(i => {
+                const recibido = i.cantidad_recibida !== null && i.cantidad_recibida !== undefined;
+                const diff = recibido ? Number(i.diferencia) : null;
+                const diffColor = diff === null ? 'var(--gray-400)' : diff < 0 ? 'var(--red)' : diff > 0 ? 'var(--yellow)' : 'var(--green)';
+                const diffTxt  = diff === null ? '—' : (diff > 0 ? '+' : '') + fmtNum(diff);
+                return `<tr>
+                  <td class="text-sm text-muted">${i.productos?.codigo||'—'}</td>
+                  <td><strong>${i.productos?.nombre||'—'}</strong></td>
+                  <td><span style="font-family:monospace;font-size:12px;color:var(--purple);font-weight:600;">${i.lote||'<span class=\'text-muted\'>—</span>'}</span></td>
+                  <td>${fmtNum(i.cantidad_enviada)} ${i.productos?.unidad||''}</td>
+                  <td>${i.cantidad_recibida !== null ? fmtNum(i.cantidad_recibida)+' '+i.productos?.unidad : '<span class="text-muted">—</span>'}</td>
+                  <td style="color:${diffColor};font-weight:700;">${diffTxt}</td>
+                  <td>${i.consecutivo_ofimatica ? `<span style="color:var(--green);font-weight:700;">${i.consecutivo_ofimatica}</span>` : '<span class="text-muted">—</span>'}</td>
+                  <td class="text-sm text-muted">${i.observacion_diferencia||'—'}</td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- RIGHT: Trazabilidad -->
+      <div class="card">
+        <div class="card-header"><span class="card-title">🔍 Trazabilidad</span></div>
+        <div class="card-body" style="padding:0;">
+          ${trazabilidad.length === 0
+            ? `<div class="table-empty">Sin eventos registrados</div>`
+            : trazabilidad.map(trz => {
+                const detalles = trazDetalles.filter(d=>d.trazabilidad_id===trz.id);
+                const eventoLabels = {
+                  creado: '📝 Traslado Creado', salida_confirmada: '🚚 Salida Confirmada',
+                  recibido: '✅ Recibido', recibido_con_diferencias: '⚠️ Recibido c/Diferencias',
+                  registrado_ofimatica: '🗂️ Registrado Ofimática', anulado: '🚫 Anulado'
+                };
+                return `
+                  <div style="padding:14px 18px;border-bottom:1px solid var(--gray-100);">
+                    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;">
+                      <span style="font-weight:700;font-size:13px;">${eventoLabels[trz.evento]||trz.evento}</span>
+                      <span class="text-sm text-muted">${fmtDateTime(trz.fecha_hora)}</span>
+                    </div>
+                    <div class="text-sm text-muted" style="margin-bottom:6px;">${getNombre(trz.usuario_id)}</div>
+                    ${detalles.length ? `
+                      <table style="width:100%;font-size:12px;border-collapse:collapse;">
+                        <thead><tr>
+                          <th style="text-align:left;color:var(--gray-400);padding:3px 6px;border-bottom:1px solid var(--gray-100);">Producto</th>
+                          <th style="text-align:right;color:var(--gray-400);padding:3px 6px;border-bottom:1px solid var(--gray-100);">Cant.</th>
+                          <th style="text-align:left;color:var(--gray-400);padding:3px 6px;border-bottom:1px solid var(--gray-100);">Obs.</th>
+                        </tr></thead>
+                        <tbody>
+                          ${detalles.map(d=>`
+                            <tr>
+                              <td style="padding:3px 6px;">${d.productos?.nombre||'—'}</td>
+                              <td style="padding:3px 6px;text-align:right;">${fmtNum(d.cantidad)} ${d.productos?.unidad||''}</td>
+                              <td style="padding:3px 6px;color:var(--gray-400);">${d.observacion||'—'}</td>
+                            </tr>
+                          `).join('')}
+                        </tbody>
+                      </table>
+                    ` : ''}
+                  </div>
+                `;
+              }).join('')
+          }
+        </div>
+      </div>
+
+    </div>
+  `;
+}
+
+async function confirmarSalida() {
+  if (!confirm('¿Confirmar salida de planta?')) return;
+  try {
+    await supaPatch('traslados', `id=eq.${tid}`, {
+      estado: 'en_transito',
+      confirmado_salida_por: user.id,
+      fecha_salida: new Date().toISOString()
+    });
+    const trz = await supaPost('trazabilidad', {
+      traslado_id: tid, evento: 'salida_confirmada',
+      usuario_id: user.id, fecha_hora: new Date().toISOString()
+    });
+    if (trz?.[0]) {
+      await supaPost('trazabilidad_detalles', items.map(i=>({
+        trazabilidad_id: trz[0].id, producto_id: i.producto_id,
+        cantidad: i.cantidad_enviada, observacion: 'Salida confirmada'
+      })));
+    }
+    toast('Salida confirmada', 'ok'); load();
+  } catch(e) { toast('Error: '+e.message,'err'); }
+}
+
+function abrirRecibir() {
+  const cont = document.getElementById('recibir-items');
+  cont.innerHTML = items.map(i=>`
+    <div style="display:flex;gap:10px;align-items:flex-end;margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid var(--gray-100);">
+      <div style="flex:2;">
+        <div style="font-weight:700;font-size:14px;margin-bottom:4px;">${i.productos?.nombre||'—'}</div>
+        <div class="text-sm text-muted">Enviado: ${fmtNum(i.cantidad_enviada)} ${i.productos?.unidad||''}</div>
+      </div>
+      <div class="form-group" style="flex:1;">
+        <label class="form-label">Recibido</label>
+        <input type="number" class="form-input" id="recv-${i.id}" value="${i.cantidad_enviada}" min="0" step="0.01">
+      </div>
+      <div class="form-group" style="flex:1.5;">
+        <label class="form-label">Obs. diferencia</label>
+        <input type="text" class="form-input" id="obs-${i.id}" placeholder="Opcional">
+      </div>
+    </div>
+  `).join('');
+  openModal('modal-recibir');
+}
+
+async function confirmarRecepcion() {
+  try {
+    let hayDif = false;
+    for (const i of items) {
+      const recv = parseFloat(document.getElementById(`recv-${i.id}`).value);
+      const obs  = document.getElementById(`obs-${i.id}`).value;
+      if (recv !== i.cantidad_enviada) hayDif = true;
+      await supaPatch('traslado_items', `id=eq.${i.id}`, {
+        cantidad_recibida: recv,
+        observacion_diferencia: obs || null
+      });
+    }
+
+    const nuevoEstado = hayDif ? 'recibido_con_diferencias' : 'recibido';
+    await supaPatch('traslados', `id=eq.${tid}`, {
+      estado: nuevoEstado, recibido_por: user.id,
+      fecha_recepcion: new Date().toISOString()
+    });
+
+    const evento = hayDif ? 'recibido_con_diferencias' : 'recibido';
+    const trz = await supaPost('trazabilidad', {
+      traslado_id: tid, evento,
+      usuario_id: user.id, fecha_hora: new Date().toISOString()
+    });
+    if (trz?.[0]) {
+      const detalles = items.map(i => {
+        const recv = parseFloat(document.getElementById(`recv-${i.id}`)?.value);
+        const obs  = document.getElementById(`obs-${i.id}`)?.value;
+        return {
+          trazabilidad_id: trz[0].id, producto_id: i.producto_id||i.productos?.id,
+          cantidad: recv,
+          observacion: obs || (recv !== i.cantidad_enviada ? `Diferencia: ${recv - i.cantidad_enviada}` : 'Sin diferencia')
+        };
+      });
+      await supaPost('trazabilidad_detalles', detalles);
+    }
+
+    closeModal('modal-recibir');
+    toast(hayDif ? 'Recibido con diferencias' : 'Recibido correctamente', 'ok');
+    load();
+  } catch(e) { toast('Error: '+e.message,'err'); }
+}
+
+function abrirOfimatica() {
+  const cont = document.getElementById('ofi-items-container');
+  cont.innerHTML = items.map(i=>`
+    <div style="display:flex;gap:10px;align-items:flex-end;margin-bottom:12px;">
+      <div style="flex:2;">
+        <div style="font-weight:700;font-size:14px;">${i.productos?.nombre||'—'}</div>
+        <div class="text-sm text-muted">Recibido: ${fmtNum(i.cantidad_recibida||i.cantidad_enviada)} ${i.productos?.unidad||''}</div>
+      </div>
+      <div class="form-group" style="flex:1.5;">
+        <label class="form-label">Consec. por ítem</label>
+        <input type="text" class="form-input" id="ofi-item-${i.id}" value="${i.consecutivo_ofimatica||''}" placeholder="Ej: OF-1234">
+      </div>
+    </div>
+  `).join('');
+  document.getElementById('ofi-consecutivo-general').value = traslado.consecutivo_ofimatica || '';
+  openModal('modal-ofimatica');
+}
+
+async function confirmarOfimatica() {
+  try {
+    const general = document.getElementById('ofi-consecutivo-general').value.trim();
+
+    for (const i of items) {
+      const consec = document.getElementById(`ofi-item-${i.id}`)?.value.trim();
+      if (consec) await supaPatch('traslado_items', `id=eq.${i.id}`, { consecutivo_ofimatica: consec });
+    }
+
+    await supaPatch('traslados', `id=eq.${tid}`, {
+      consecutivo_ofimatica: general || null,
+      registrado_ofimatica_por: user.id,
+      fecha_registro_ofimatica: new Date().toISOString()
+    });
+
+    const trz = await supaPost('trazabilidad', {
+      traslado_id: tid, evento: 'registrado_ofimatica',
+      usuario_id: user.id, fecha_hora: new Date().toISOString()
+    });
+    if (trz?.[0]) {
+      await supaPost('trazabilidad_detalles', items.map(i=>{
+        const consec = document.getElementById(`ofi-item-${i.id}`)?.value.trim();
+        return {
+          trazabilidad_id: trz[0].id, producto_id: i.producto_id||i.productos?.id,
+          cantidad: i.cantidad_recibida||i.cantidad_enviada,
+          observacion: consec ? `Consec: ${consec}` : general ? `Consec. general: ${general}` : 'Registrado'
+        };
+      }));
+    }
+
+    closeModal('modal-ofimatica');
+    toast('Registrado en Ofimática', 'ok');
+    load();
+  } catch(e) { toast('Error: '+e.message,'err'); }
+}
+
+async function anular() {
+  if (!confirm('¿Seguro que querés anular este traslado? Esta acción no se puede deshacer.')) return;
+  try {
+    await supaPatch('traslados', `id=eq.${tid}`, { estado: 'anulado' });
+    const trz = await supaPost('trazabilidad', {
+      traslado_id: tid, evento: 'anulado',
+      usuario_id: user.id, fecha_hora: new Date().toISOString()
+    });
+    toast('Traslado anulado', 'ok');
+    load();
+  } catch(e) { toast('Error: '+e.message,'err'); }
+}
+
+load();
+</script>
+</body>
+</html>
